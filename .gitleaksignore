@@ -1,12 +1,15 @@
-# Baseline: findings of the first full-history scan on the unchanged starter app.
-# hardcoded password:
-1e91d660abb6141905476d6ea826e6f67342bc19:docker-compose.yml:hardcoded-password-config:17
+# Baseline van Gitleaks: bevindingen in de history die we bewust aanvaarden.
+# De reden per bevinding staat in geaccepteerde-problemen.md.
+
+# Databankwachtwoord van de starter app (docker-compose.yml en appsettings.json).
+# Echt probleem. Aanvaard: zie geaccepteerde-problemen.md, punt 1.
 836c752ccc5c668f68447a8147c13088f0632724:docker-compose.yml:hardcoded-password-config:7
 836c752ccc5c668f68447a8147c13088f0632724:docker-compose.yml:hardcoded-password-config:17
 836c752ccc5c668f68447a8147c13088f0632724:app/appsettings.json:hardcoded-password-config:11
+# Dezelfde regel, opnieuw toegevoegd in twee latere commits op dev (test en pipeline-commit).
+1e91d660abb6141905476d6ea826e6f67342bc19:docker-compose.yml:hardcoded-password-config:17
+47131771d52daad6323ebae277af0e0d18943840:docker-compose.yml:hardcoded-password-config:17
 
-# API key in appsettings.json:
+# API key in appsettings.json.
+# Geen werkende key. Aanvaard: zie geaccepteerde-problemen.md, punt 2.
 836c752ccc5c668f68447a8147c13088f0632724:app/appsettings.json:generic-api-key:15
-
-# Assignment tells us to accept the findings of these baseline risks (for now).
-# Fix planned: move to GitHub Secrets, later OpenBao.
