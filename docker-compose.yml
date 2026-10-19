@@ -1,13 +1,69 @@
+# App achter BunkerWeb (WAF). Alleen BunkerWeb publiceert poorten (80 en 443).
+# Drie netwerkzones: bw-services (WAF naar app), app-data (app naar databank)
+# en bw-universe (beheer van BunkerWeb, nooit naar buiten).
+# Gebaseerd op de lokale opzet van SDB (branch waf-bunkerweb). De web-UI van BunkerWeb
+# (met MariaDB) werkte in die lokale opzet, maar staat bewust niet op de VM: de opdracht
+# vraagt geen dashboard, en de UI brengt een extra databank, twee geheimen en een
+# beheerpagina mee. Blokkeringen lezen we in de logs van de bunkerweb-container.
+
+x-bw-api-env: &bw-api-env
+  # Alleen deze bronnen mogen de interne API van BunkerWeb aanroepen.
+  API_WHITELIST_IP: "127.0.0.0/8 10.20.30.0/24"
+
 services:
+  bunkerweb:
+    image: bunkerity/bunkerweb:1.6.14@sha256:2026544f5b8e10e3db52c018cb583193d273fc8ca9e25a5f5c21ef0b5f833586
+    ports:
+      - "80:8080/tcp"
+      - "443:8443/tcp"
+    environment:
+      <<: *bw-api-env
+    restart: unless-stopped
+    networks:
+      - bw-universe
+      - bw-services
+
+  bw-scheduler:
+    image: bunkerity/bunkerweb-scheduler:1.6.14@sha256:0b68b1fe27977d713804a1460f7fd713db49e90385e19dc7c0baf14ea3b06060
+    depends_on:
+      - bunkerweb
+    environment:
+      <<: *bw-api-env
+      BUNKERWEB_INSTANCES: "bunkerweb"
+      SERVER_NAME: "g15.pospi.org"
+      MULTISITE: "no"
+      # Reverse proxy naar de app
+      USE_REVERSE_PROXY: "yes"
+      REVERSE_PROXY_HOST: "http://app:8080"
+      REVERSE_PROXY_URL: "/"
+      # HTTPS via Let's Encrypt (HTTP-01). Eerst staging, dan productie.
+      AUTO_LETS_ENCRYPT: "yes"
+      LETS_ENCRYPT_CHALLENGE: "http"
+      USE_LETS_ENCRYPT_STAGING: "${LE_STAGING:-yes}"
+      EMAIL_LETS_ENCRYPT: "${LE_EMAIL}"
+      # WAF: ModSecurity met OWASP CRS 4, blocking paranoia level 2
+      USE_MODSECURITY: "yes"
+      USE_MODSECURITY_CRS: "yes"
+      MODSECURITY_CRS_VERSION: "4"
+      CUSTOM_CONF_MODSEC_CRS_paranoia: 'SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.blocking_paranoia_level=2"'
+    volumes:
+      # Instellingen, cache en certificaten van Let's Encrypt blijven bewaard
+      - bw-storage:/data
+    restart: unless-stopped
+    networks:
+      - bw-universe
+
   app:
     build: ./app
-    ports:
-      - "8080:8080"
+    # Geen ports: de app is alleen bereikbaar via BunkerWeb.
     environment:
       ConnectionStrings__Unbreakable: "Host=db;Port=5432;Database=unbreakable;Username=unbreakable;Password=${POSTGRES_PASSWORD}"
     depends_on:
       - db
     restart: unless-stopped
+    networks:
+      - bw-services
+      - app-data
 
   db:
     image: postgres:17
@@ -18,6 +74,21 @@ services:
     volumes:
       - dbdata:/var/lib/postgresql/data
     restart: unless-stopped
+    networks:
+      - app-data
+
+networks:
+  bw-universe:
+    name: bw-universe
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.20.30.0/24
+  bw-services:
+    name: bw-services
+  app-data:
+    name: app-data
 
 volumes:
+  bw-storage:
   dbdata:
