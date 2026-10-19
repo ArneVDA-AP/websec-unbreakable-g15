@@ -1,0 +1,5 @@
+# Baseline van Trivy: kwetsbaarheden die we bewust aanvaarden, met een vervaldatum.
+# De reden staat in geaccepteerde-problemen.md, punt 4.
+
+# Newtonsoft.Json 12.0.1: DoS via diep geneste JSON (opgelost in 13.0.1).
+CVE-2024-21907 exp:2026-12-31

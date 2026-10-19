@@ -1,0 +1,86 @@
+name: security-pipeline
+
+on:
+  push:
+  workflow_dispatch:
+
+# Minimale rechten voor het GITHUB_TOKEN; jobs vragen alleen extra wat ze nodig hebben.
+permissions:
+  contents: read
+
+# Alle actions staan vastgepind op een commit SHA. De tag staat erachter als commentaar.
+jobs:
+  secrets:   # DSOMM: Test for stored secrets in code (1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install Gitleaks (checksum verified)
+        run: |
+          VER=8.24.3
+          SHA256=9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+          curl -sSLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz
+          echo "${SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: Run Gitleaks on pushed commits
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            RANGE="origin/main..${{ github.sha }}"
+          else
+            RANGE="$BEFORE..${{ github.sha }}"
+          fi
+          echo "Scanning range: $RANGE"
+          ./gitleaks git --redact -v --config .gitleaks.toml --log-opts="$RANGE"
+
+  sca:       # DSOMM: Software Composition Analysis (server side) (2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+  sast:      # DSOMM: Static analysis for important server side components (3)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          languages: csharp
+          build-mode: autobuild
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      - name: Fail on open high/critical CodeQL alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          n=$(gh api "repos/${{ github.repository }}/code-scanning/alerts?state=open&ref=${{ github.ref }}&per_page=100" \
+            --jq '[.[] | select(.rule.security_severity_level=="high" or .rule.security_severity_level=="critical")] | length')
+          echo "Open high/critical alerts: $n"
+          [ "$n" -eq 0 ]
+
+  deploy:    # DSOMM: Automated deployment process (1), Defined deployment process (1)
+    needs: [secrets, sca, sast]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and start the app
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: docker compose -p unbreakable up -d --build --remove-orphans
+      - name: Show running containers
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: docker compose -p unbreakable ps

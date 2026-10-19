@@ -4,7 +4,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      ConnectionStrings__Unbreakable: "Host=db;Port=5432;Database=unbreakable;Username=unbreakable;Password=Unbr3akable!2026"
+      ConnectionStrings__Unbreakable: "Host=db;Port=5432;Database=unbreakable;Username=unbreakable;Password=${POSTGRES_PASSWORD}"
     depends_on:
       - db
     restart: unless-stopped
@@ -14,7 +14,7 @@ services:
     environment:
       POSTGRES_DB: unbreakable
       POSTGRES_USER: unbreakable
-      POSTGRES_PASSWORD: Unbr3akable!2026
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - dbdata:/var/lib/postgresql/data
     restart: unless-stopped
