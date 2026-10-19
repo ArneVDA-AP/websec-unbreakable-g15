@@ -1,0 +1,116 @@
+# [Op je laptop] — waf/docker-compose.yml
+# App achter BunkerWeb, drie netwerkzones, ModSecurity + CRS 4 (PL1), web-UI.
+# Geheimen staan in .env (niet committen).
+
+x-bw-api-env: &bw-api-env
+  # gedeeld door proxy, scheduler en ui: alleen deze bronnen mogen de interne API aanroepen
+  API_WHITELIST_IP: "127.0.0.0/8 10.20.30.0/24"
+
+services:
+  bunkerweb:
+    image: bunkerity/bunkerweb:1.6.14@sha256:2026544f5b8e10e3db52c018cb583193d273fc8ca9e25a5f5c21ef0b5f833586
+    ports:
+      - "80:8080/tcp"
+      - "443:8443/tcp"
+      - "443:8443/udp"   # QUIC
+    environment:
+      <<: *bw-api-env
+    restart: unless-stopped
+    networks:
+      - bw-universe
+      - bw-services
+
+  bw-scheduler:
+    image: bunkerity/bunkerweb-scheduler:1.6.14@sha256:0b68b1fe27977d713804a1460f7fd713db49e90385e19dc7c0baf14ea3b06060
+    environment:
+      <<: *bw-api-env
+      BUNKERWEB_INSTANCES: "bunkerweb"
+      SERVER_NAME: "localhost"
+      MULTISITE: "no"
+      DATABASE_URI: "mariadb+pymysql://bunkerweb:${MARIADB_PASSWORD}@bw-db:3306/db"
+      USE_REVERSE_PROXY: "yes"
+      REVERSE_PROXY_HOST: "http://app:8080"
+      REVERSE_PROXY_URL: "/"
+      USE_MODSECURITY: "yes"
+      USE_MODSECURITY_CRS: "yes"
+      MODSECURITY_CRS_VERSION: "4"
+      CUSTOM_CONF_MODSEC_CRS_paranoia: 'SecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.blocking_paranoia_level=2"'
+    volumes:
+      - bw-storage:/data
+    depends_on:
+      - bw-db
+    restart: unless-stopped
+    networks:
+      - bw-universe
+
+  bw-ui:
+    image: bunkerity/bunkerweb-ui:1.6.14@sha256:db205be9cf8bf15e24569d6a0c8ab9a6292c036d7501e7f1f2352692d00c1af9
+    ports:
+      - "7000:7000"      # lab-gemak: UI rechtstreeks; op de VM gaat dit achter de WAF
+    environment:
+      <<: *bw-api-env
+      DATABASE_URI: "mariadb+pymysql://bunkerweb:${MARIADB_PASSWORD}@bw-db:3306/db"
+      ADMIN_USERNAME: "${UI_ADMIN_USERNAME}"
+      ADMIN_PASSWORD: "${UI_ADMIN_PASSWORD}"
+    volumes:
+      - bw-ui-data:/data
+    depends_on:
+      - bw-db
+    restart: unless-stopped
+    networks:
+      - bw-universe
+
+  bw-db:
+    image: mariadb@sha256:6422478cb8e159f080fb1d8ccf65101e26fe51385787fde7d16c3b165a331f15
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: "db"
+      MYSQL_USER: "bunkerweb"
+      MYSQL_PASSWORD: "${MARIADB_PASSWORD}"
+    volumes:
+      - bw-db-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - bw-universe
+
+  app:
+    build: ../app
+    environment:
+      ConnectionStrings__Unbreakable: "Host=db;Port=5432;Database=unbreakable;Username=unbreakable;Password=Unbr3akable!2026"
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - bw-services
+      - app-data
+    # geen ports: de app is enkel bereikbaar via BunkerWeb
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: unbreakable
+      POSTGRES_USER: unbreakable
+      POSTGRES_PASSWORD: Unbr3akable!2026
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app-data
+
+networks:
+  bw-universe:
+    name: bw-universe
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.20.30.0/24
+  bw-services:
+    name: bw-services
+  app-data:
+    name: app-data
+
+volumes:
+  bw-storage:
+  bw-ui-data:
+  bw-db-data:
+  dbdata:
