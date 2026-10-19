@@ -79,6 +79,8 @@ jobs:
       - name: Build and start the app
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          LE_EMAIL: ${{ secrets.LE_EMAIL }}
+          LE_STAGING: ${{ vars.LE_STAGING }}
         run: docker compose -p unbreakable up -d --build --remove-orphans
       - name: Show running containers
         env:
