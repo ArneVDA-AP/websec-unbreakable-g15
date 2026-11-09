@@ -16,7 +16,7 @@ cd <jouw repo>
 docker compose up -d --build
 ```
 
-Surf daarna naar `http://localhost:8080`, of naar poort 8080 van je server. Vul een naam in, bijvoorbeeld **Anna**, **Bram** of **Chris**: die hebben al berichten.
+Surf daarna naar `http://localhost:8080`, of naar poort 8080 van je server. Vul een naam in, bijvoorbeeld **Anna** of **Bram**. De app start bewust zonder voorbeeldberichten: de databank mag enkel versleutelde berichten bevatten.
 
 Stoppen doe je met `docker compose down`. Wil je opnieuw beginnen met een lege databank, gebruik dan `docker compose down -v`.
 
