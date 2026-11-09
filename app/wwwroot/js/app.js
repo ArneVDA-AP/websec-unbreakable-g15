@@ -1,6 +1,7 @@
 // De schermen van Unbreakable. Navigeren gebeurt met het deel na # in de URL.
 
 import { api, currentUser, setUser } from './api.js';
+import * as otp from './crypto.js';
 
 const app = document.getElementById('app');
 
@@ -138,23 +139,66 @@ async function renderInbox(params) {
 
 // ------------------------------------------------------------------ bericht lezen
 
+function showStatus(element, type, text) {
+    element.innerHTML = `<div class="alert alert-${type}"></div>`;
+    element.firstElementChild.textContent = text;
+}
+
 async function renderMessage(id) {
     const m = await api.message(id);
 
     app.innerHTML = `
-        <h1>${m.subject}</h1>
+        <h1>${escapeHtml(m.subject)}</h1>
         <dl class="row">
             <dt class="col-sm-2">Van</dt><dd class="col-sm-10">${escapeHtml(m.sender)}</dd>
             <dt class="col-sm-2">Aan</dt><dd class="col-sm-10">${escapeHtml(m.recipient)}</dd>
             <dt class="col-sm-2">Verzonden</dt><dd class="col-sm-10">${formatDate(m.sentAt)}</dd>
+            <dt class="col-sm-2">Codeboeklijn</dt><dd class="col-sm-10">${escapeHtml(m.keyLine)}</dd>
+            <dt class="col-sm-2">Ciphertext</dt><dd class="col-sm-10"><code id="cipher"></code></dd>
         </dl>
-        <div class="card mb-3"><div class="card-body message-body" id="body"></div></div>
+        <form id="unlock" class="mb-3" autocomplete="off">
+            <div class="form-group">
+                <label for="keyline">Lijn ${escapeHtml(m.keyLine)} uit je codeboek (nummer en sleutel)</label>
+                <input id="keyline" class="form-control" spellcheck="false" autocomplete="off" required />
+            </div>
+            <div class="form-group">
+                <label for="mackey">HMAC-sleutel</label>
+                <input id="mackey" type="password" class="form-control" autocomplete="off" required />
+            </div>
+            <button type="submit" class="btn btn-primary">Controleren en ontsleutelen</button>
+        </form>
+        <div id="status"></div>
+        <div id="bodycard" class="card mb-3 d-none"><div class="card-body message-body" id="body"></div></div>
         <p>
             <button id="delete" class="btn btn-outline-danger">Verwijderen</button>
             <a href="#/inbox" class="btn btn-link">Terug naar je inbox</a>
         </p>`;
 
-    document.getElementById('body').textContent = m.body;
+    document.getElementById('cipher').textContent = m.body;
+    const status = document.getElementById('status');
+    const bodyCard = document.getElementById('bodycard');
+    const body = document.getElementById('body');
+
+    document.getElementById('unlock').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        bodyCard.classList.add('d-none');
+        body.textContent = '';
+        try {
+            const { line, key } = otp.parseKeyLine(document.getElementById('keyline').value);
+            if (line !== m.keyLine) {
+                throw new Error(`Je plakte lijn ${line}, maar dit bericht is versleuteld met lijn ${m.keyLine}.`);
+            }
+            const ok = await otp.hmacVerify(document.getElementById('mackey').value, m.keyLine, m.body, m.mac);
+            if (!ok) {
+                throw new Error('De MAC klopt niet: het bericht is gewijzigd of de HMAC-sleutel is verkeerd. Het bericht wordt niet getoond.');
+            }
+            body.textContent = otp.decrypt(m.body, key).replaceAll('_', ' ');
+            bodyCard.classList.remove('d-none');
+            showStatus(status, 'success', 'MAC gecontroleerd: het bericht is niet gewijzigd.');
+        } catch (error) {
+            showStatus(status, 'danger', error.message);
+        }
+    });
 
     document.getElementById('delete').addEventListener('click', async () => {
         if (confirm('Ben je zeker dat je dit bericht wil verwijderen?')) {
@@ -174,7 +218,7 @@ async function renderNew() {
         <p class="text-muted">Van: ${escapeHtml(currentUser())}</p>
         <div class="row">
             <div class="col-md-8">
-                <form id="compose">
+                <form id="compose" autocomplete="off">
                     <div class="form-group">
                         <label for="recipient">Aan</label>
                         <input id="recipient" class="form-control" list="known-users" autocomplete="off"
@@ -184,27 +228,75 @@ async function renderNew() {
                         </datalist>
                     </div>
                     <div class="form-group">
-                        <label for="subject">Onderwerp</label>
-                        <input id="subject" class="form-control" required maxlength="100" />
+                        <label for="text">Bericht</label>
+                        <textarea id="text" class="form-control" rows="3" required></textarea>
+                        <small class="form-text text-muted">Wordt versleuteld als: <code id="preview"></code> <span id="count"></span></small>
                     </div>
                     <div class="form-group">
-                        <label for="text">Bericht</label>
-                        <textarea id="text" class="form-control" rows="6" required maxlength="2000"></textarea>
+                        <label for="keyline">Lijn uit je codeboek (nummer en sleutel)</label>
+                        <input id="keyline" class="form-control" spellcheck="false" autocomplete="off" required />
                     </div>
-                    <button type="submit" class="btn btn-primary">Versturen</button>
+                    <div class="form-group">
+                        <label for="mackey">HMAC-sleutel</label>
+                        <input id="mackey" type="password" class="form-control" autocomplete="off" required />
+                    </div>
+                    <div id="status"></div>
+                    <button type="submit" class="btn btn-primary">Versleutelen en versturen</button>
                     <a href="#/inbox" class="btn btn-link">Annuleren</a>
                 </form>
             </div>
         </div>`;
 
+    const text = document.getElementById('text');
+    const keyline = document.getElementById('keyline');
+    const preview = document.getElementById('preview');
+    const count = document.getElementById('count');
+    const status = document.getElementById('status');
+
+    function updatePreview() {
+        const { result, rejected } = otp.normalize(text.value);
+        preview.textContent = result;
+        let limit = 40;
+        try {
+            limit = otp.parseKeyLine(keyline.value).key.length;
+        } catch {
+        }
+        count.textContent = `(${[...result].length} / ${limit} tekens)`;
+        if (rejected.length) {
+            showStatus(status, 'warning', 'Deze tekens kunnen niet verstuurd worden: ' + rejected.join(', '));
+        } else {
+            status.innerHTML = '';
+        }
+    }
+
+    text.addEventListener('input', updatePreview);
+    keyline.addEventListener('input', updatePreview);
+    updatePreview();
+
     document.getElementById('compose').addEventListener('submit', async (event) => {
         event.preventDefault();
-        await api.send({
-            recipient: document.getElementById('recipient').value.trim(),
-            subject: document.getElementById('subject').value,
-            body: document.getElementById('text').value,
-        });
-        location.hash = '#/inbox';
+        try {
+            const { result, rejected } = otp.normalize(text.value);
+            if (rejected.length) {
+                throw new Error('Deze tekens kunnen niet verstuurd worden: ' + rejected.join(', '));
+            }
+            if (result.length === 0) {
+                throw new Error('Het bericht is leeg.');
+            }
+            const { line, key } = otp.parseKeyLine(keyline.value);
+            const body = otp.encrypt(result, key);
+            const mac = await otp.hmacSign(document.getElementById('mackey').value, line, body);
+            await api.send({
+                recipient: document.getElementById('recipient').value.trim(),
+                subject: 'Versleuteld bericht',
+                body,
+                keyLine: line,
+                mac,
+            });
+            location.hash = '#/inbox';
+        } catch (error) {
+            showStatus(status, 'danger', error.message);
+        }
     });
 }
 

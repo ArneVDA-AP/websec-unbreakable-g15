@@ -28,4 +28,12 @@ public class Message
 
     [Display(Name = "Verzonden")]
     public DateTime SentAt { get; set; }
+
+    [Display(Name = "Lijn")]
+    public int KeyLine { get; set; }
+
+    [Required]
+    [StringLength(64)]
+    [Display(Name = "MAC")]
+    public string Mac { get; set; }
 }

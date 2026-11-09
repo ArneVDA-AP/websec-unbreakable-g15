@@ -1,0 +1,5 @@
+services:
+  bw-scheduler:
+    environment:
+      SERVER_NAME: "localhost"
+      AUTO_LETS_ENCRYPT: "no"
