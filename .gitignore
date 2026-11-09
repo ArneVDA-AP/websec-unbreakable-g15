@@ -5,3 +5,6 @@ obj/
 *.user
 *.suo
 .env
+
+codeboek*.txt
+hmac-sleutel*.txt
